@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS acquisitions (
   uploader_email TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_acq_qda_file_url ON acquisitions(qda_file_url);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_acq_qda_file_url ON acquisitions(qda_file_url);
 CREATE INDEX IF NOT EXISTS idx_acq_local_dir ON acquisitions(local_dir);
 """
 
@@ -50,7 +50,7 @@ def insert_acquisition(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO acquisitions
+        INSERT OR IGNORE INTO acquisitions
         (qda_file_url, download_timestamp, local_dir, local_qda_filename,
          context_repository, license, uploader_name, uploader_email)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)

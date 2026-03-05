@@ -7,11 +7,12 @@ from pathlib import Path
 import requests
 
 import db as dbmod
+from download_policy import policy_from_config
 from qda_exts import load_qda_extensions
 from util import ensure_dir, utc_now_iso
 
 from zenodo import (
-    search_records as zen_search,
+    search_records_overfetch as zen_search_overfetch,
     extract_license as zen_license,
     extract_uploader as zen_uploader,
     record_has_qda_file as zen_has_qda,
@@ -22,7 +23,7 @@ from dataverse import (
     search_dataverse,
     get_dataset_details,
     extract_license as dv_license,
-    record_has_qda as dv_has_qda,
+    record_has_qda_or_zip as dv_has_qda_or_zip,
     download_dataset as dv_download,
 )
 
@@ -47,27 +48,35 @@ def main() -> None:
     ensure_dir(downloads_root)
 
     qda_exts = load_qda_extensions(qda_xlsx)
+    policy = policy_from_config(cfg, qda_exts)
 
     conn = dbmod.connect(sqlite_path)
     dbmod.init_db(conn)
 
-    # counters so you can verify it’s working
     zen_scanned = zen_skip_no_license = zen_skip_no_qda = zen_downloaded = zen_rows = 0
     dv_scanned = dv_skip_no_license = dv_skip_no_qda = dv_downloaded = dv_rows = 0
 
+    run_bytes_used = 0
+
     with requests.Session() as session:
         # -------------------
-        # Zenodo acquisition
+        # Zenodo
         # -------------------
-        zen_records = zen_search(
+        overfetch = max(args.limit * 30, 100)
+        zen_candidates = zen_search_overfetch(
             qda_exts=qda_exts,
             session=session,
             timeout=timeout,
             user_agent=user_agent,
-            limit=args.limit,
+            overfetch=overfetch,
         )
 
-        for rec in zen_records:
+        for rec in zen_candidates:
+            if zen_downloaded >= args.limit:
+                break
+            if run_bytes_used >= policy.max_total_bytes_per_run:
+                break
+
             zen_scanned += 1
 
             lic = zen_license(rec)
@@ -81,14 +90,18 @@ def main() -> None:
 
             uploader_name, uploader_email = zen_uploader(rec)
 
-            local_dir_rel, qda_rows = zen_download(
+            local_dir_rel, qda_rows, used_bytes = zen_download(
                 record=rec,
                 downloads_root=downloads_root,
                 qda_exts=qda_exts,
                 session=session,
                 timeout=timeout,
                 user_agent=user_agent,
+                policy=policy,
+                run_budget_left_bytes=(policy.max_total_bytes_per_run - run_bytes_used),
             )
+
+            run_bytes_used += used_bytes
 
             zen_downloaded += 1
             ts = utc_now_iso()
@@ -108,17 +121,21 @@ def main() -> None:
                 zen_rows += 1
 
         # -----------------------
-        # DataverseNO acquisition
+        # DataverseNO
         # -----------------------
         dv_items = search_dataverse(
-            qda_exts=qda_exts,
             session=session,
             timeout=timeout,
             user_agent=user_agent,
-            limit=args.limit,
+            limit=max(args.limit * 15, 150),
         )
 
         for item in dv_items:
+            if dv_downloaded >= args.limit:
+                break
+            if run_bytes_used >= policy.max_total_bytes_per_run:
+                break
+
             dv_scanned += 1
             pid = item.get("global_id") or item.get("globalId")
             if not pid:
@@ -136,11 +153,11 @@ def main() -> None:
                 dv_skip_no_license += 1
                 continue
 
-            if not dv_has_qda(ds_json, qda_exts):
+            if not dv_has_qda_or_zip(ds_json, qda_exts):
                 dv_skip_no_qda += 1
                 continue
 
-            local_dir_rel, qda_rows = dv_download(
+            local_dir_rel, qda_rows, used_bytes = dv_download(
                 dataset_item=item,
                 dataset_json=ds_json,
                 downloads_root=downloads_root,
@@ -148,7 +165,14 @@ def main() -> None:
                 session=session,
                 timeout=timeout,
                 user_agent=user_agent,
+                policy=policy,
+                run_budget_left_bytes=(policy.max_total_bytes_per_run - run_bytes_used),
             )
+
+            run_bytes_used += used_bytes
+
+            if not qda_rows:
+                continue
 
             dv_downloaded += 1
             ts = utc_now_iso()
@@ -180,6 +204,7 @@ def main() -> None:
     print("DataverseNO skipped (no QDA file detected):", dv_skip_no_qda)
     print("DataverseNO downloaded datasets:", dv_downloaded)
     print("DataverseNO inserted QDA rows:", dv_rows)
+    print("Run downloaded bytes:", run_bytes_used)
     print("Downloads folder:", downloads_root.resolve())
     print("SQLite DB:", sqlite_path.resolve())
     print("CSV export:", Path("metadata.csv").resolve())

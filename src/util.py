@@ -40,14 +40,73 @@ def download_file(
     out_path: Path,
     *,
     session: requests.Session,
-    timeout: int,
-    user_agent: str
-) -> None:
+    connect_timeout: int,
+    read_timeout: int,
+    user_agent: str,
+    max_bytes: int | None = None
+) -> int:
+    """
+    Downloads url to out_path.
+    Uses separate connect/read timeouts.
+    If max_bytes is set, aborts when exceeded.
+    Returns number of bytes written.
+    """
     headers = {"User-Agent": user_agent}
     ensure_dir(out_path.parent)
-    with session.get(url, stream=True, timeout=timeout, headers=headers) as r:
+
+    tmp_path = out_path.with_suffix(out_path.suffix + ".partial")
+    written = 0
+
+    with session.get(
+        url,
+        stream=True,
+        timeout=(connect_timeout, read_timeout),
+        headers=headers,
+    ) as r:
         r.raise_for_status()
-        with out_path.open("wb") as f:
+        with tmp_path.open("wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    f.write(chunk)
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if max_bytes is not None and written > max_bytes:
+                    f.close()
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    raise ValueError(f"File too large: exceeded {max_bytes} bytes")
+                f.write(chunk)
+
+    tmp_path.replace(out_path)
+    return written
+
+
+def try_download_file(
+    url: str,
+    out_path: Path,
+    *,
+    session: requests.Session,
+    connect_timeout: int,
+    read_timeout: int,
+    user_agent: str,
+    max_bytes: int | None = None
+) -> tuple[bool, int]:
+    """
+    Safe download wrapper.
+    Returns (ok, bytes_written).
+    ok False for HTTP errors, timeouts, or size abort.
+    """
+    try:
+        n = download_file(
+            url,
+            out_path,
+            session=session,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            user_agent=user_agent,
+            max_bytes=max_bytes,
+        )
+        return True, n
+    except (requests.RequestException, ValueError):
+        return False, 0
