@@ -5,6 +5,4 @@ __pycache__/
 .DS_Store
 
 my_downloads/
-metadata.db
-metadata.csv
 logs/
