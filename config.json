@@ -1,0 +1,7 @@
+{
+  "downloads_root": "my_downloads",
+  "sqlite_path": "metadata.db",
+  "qda_extensions_xlsx": "QDA File Extensions Formats.xlsx",
+  "http_timeout_sec": 60,
+  "user_agent": "SeedingQDArchive/Part1 (+FAU SQ26)"
+}
