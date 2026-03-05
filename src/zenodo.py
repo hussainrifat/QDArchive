@@ -6,35 +6,36 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
-from util import download_file, ensure_dir, is_qda_file, safe_slug
-
+from download_policy import DownloadPolicy, select_files
+from util import ensure_dir, is_qda_file, safe_slug, try_download_file
 
 ZENODO_API = "https://zenodo.org/api/records"
 
 
 def _broad_query(qda_exts: List[str]) -> str:
-    # Broad keyword query, then we filter by real QDA extensions in the file list.
-    terms = [e.lower().lstrip(".") for e in qda_exts]
-    terms = list(dict.fromkeys(terms))[:20]
-    return "(" + " OR ".join(terms) + ")"
+    ext_terms = [e.lower().lstrip(".") for e in qda_exts]
+    ext_terms = list(dict.fromkeys(ext_terms))[:15]
+    ext_q = "(" + " OR ".join(ext_terms) + ")"
+    qual_q = '(qualitative OR interview OR transcript OR "focus group" OR ethnograph OR coding)'
+    return f"({ext_q}) AND {qual_q}"
 
 
-def search_records(
+def search_records_overfetch(
     *,
     qda_exts: List[str],
     session: requests.Session,
     timeout: int,
     user_agent: str,
-    limit: int
+    overfetch: int
 ) -> List[Dict]:
     q = _broad_query(qda_exts)
-
     headers = {"User-Agent": user_agent}
-    page = 1
-    size = min(max(limit, 1), 25)
 
     results: List[Dict] = []
-    while len(results) < limit:
+    page = 1
+    size = 25
+
+    while len(results) < overfetch:
         params = {"q": q, "page": page, "size": size}
         r = session.get(ZENODO_API, params=params, headers=headers, timeout=timeout)
         r.raise_for_status()
@@ -45,16 +46,12 @@ def search_records(
             break
 
         results.extend(hits)
-
-        total = (data.get("hits") or {}).get("total") or 0
-        if len(results) >= total:
-            break
-
         page += 1
+
         if page > 200:
             break
 
-    return results[:limit]
+    return results[:overfetch]
 
 
 def extract_license(record: Dict) -> Optional[str]:
@@ -91,9 +88,12 @@ def download_record(
     downloads_root: Path,
     qda_exts: List[str],
     session: requests.Session,
-    timeout: int,
-    user_agent: str
-) -> Tuple[str, List[Tuple[str, str]]]:
+    connect_timeout: int,
+    read_timeout: int,
+    user_agent: str,
+    policy: DownloadPolicy,
+    run_budget_left_bytes: int
+) -> Tuple[str, List[Tuple[str, str]], int]:
     rec_id = str(record.get("id", "unknown"))
     md = record.get("metadata") or {}
     title = md.get("title") or f"zenodo-{rec_id}"
@@ -106,8 +106,7 @@ def download_record(
     (local_dir / "metadata.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
 
     files = record.get("files") or []
-    qda_rows: List[Tuple[str, str]] = []
-
+    candidates: List[Dict] = []
     for f in files:
         key = f.get("key")
         links = f.get("links") or {}
@@ -115,10 +114,53 @@ def download_record(
         if not key or not dl_url:
             continue
 
-        out_path = local_dir / key
-        download_file(dl_url, out_path, session=session, timeout=timeout, user_agent=user_agent)
+        size = f.get("size")
+        size_bytes = int(size) if isinstance(size, int) else None
 
-        if is_qda_file(key, qda_exts):
-            qda_rows.append((dl_url, key))
+        candidates.append({"name": key, "url": dl_url, "size_bytes": size_bytes})
 
-    return local_dir_rel, qda_rows
+    selected = select_files(candidates, policy)
+
+    qda_rows: List[Tuple[str, str]] = []
+    dataset_bytes_used = 0
+    run_bytes_used = 0
+
+    for f in selected:
+        name = f["name"]
+        url = f["url"]
+        size_bytes = f.get("size_bytes")
+
+        remaining_dataset = policy.max_total_bytes_per_dataset - dataset_bytes_used
+        remaining_run = run_budget_left_bytes - run_bytes_used
+        if remaining_dataset <= 0 or remaining_run <= 0:
+            break
+
+        max_for_this_file = policy.max_bytes_per_file
+        if remaining_dataset < max_for_this_file:
+            max_for_this_file = remaining_dataset
+        if remaining_run < max_for_this_file:
+            max_for_this_file = remaining_run
+
+        if isinstance(size_bytes, int) and size_bytes > max_for_this_file:
+            continue
+
+        out_path = local_dir / name
+        ok, nbytes = try_download_file(
+            url,
+            out_path,
+            session=session,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            user_agent=user_agent,
+            max_bytes=max_for_this_file,
+        )
+        if not ok:
+            continue
+
+        dataset_bytes_used += nbytes
+        run_bytes_used += nbytes
+
+        if is_qda_file(name, qda_exts):
+            qda_rows.append((url, name))
+
+    return local_dir_rel, qda_rows, run_bytes_used
