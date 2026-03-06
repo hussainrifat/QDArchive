@@ -34,12 +34,13 @@ def acquire(
     scanned = skipped_no_license = skipped_no_qda = downloaded_datasets = inserted_rows = 0
     bytes_used = 0
 
-    overfetch = max(limit * 30, 100)
+    overfetch = max(limit * 10, 100)
 
     candidates = zen_search_overfetch(
         qda_exts=qda_exts,
         session=session,
-        timeout=timeout,
+        connect_timeout=connect_timeout,
+        read_timeout=read_timeout,
         user_agent=user_agent,
         overfetch=overfetch,
     )
