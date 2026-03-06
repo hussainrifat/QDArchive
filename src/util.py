@@ -35,6 +35,40 @@ def is_qda_file(filename: str, qda_exts: Iterable[str]) -> bool:
     return e in s
 
 
+def _sleep_backoff(attempt: int) -> None:
+    # 0 -> 0.5s, 1 -> 1s, 2 -> 2s, 3 -> 4s ...
+    time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+
+
+def get_json_with_retries(
+    url: str,
+    *,
+    session: requests.Session,
+    headers: dict,
+    params: dict | None,
+    connect_timeout: int,
+    read_timeout: int,
+    max_retries: int = 4,
+) -> dict:
+    last_err: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = session.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=(connect_timeout, read_timeout),
+            )
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError) as e:
+            last_err = e
+            if attempt >= max_retries:
+                break
+            _sleep_backoff(attempt)
+    raise RuntimeError(f"GET JSON failed after retries: {url} ({last_err})")
+
+
 def download_file(
     url: str,
     out_path: Path,
@@ -47,7 +81,6 @@ def download_file(
 ) -> int:
     """
     Downloads url to out_path.
-    Uses separate connect/read timeouts.
     If max_bytes is set, aborts when exceeded.
     Returns number of bytes written.
     """
@@ -57,12 +90,7 @@ def download_file(
     tmp_path = out_path.with_suffix(out_path.suffix + ".partial")
     written = 0
 
-    with session.get(
-        url,
-        stream=True,
-        timeout=(connect_timeout, read_timeout),
-        headers=headers,
-    ) as r:
+    with session.get(url, stream=True, timeout=(connect_timeout, read_timeout), headers=headers) as r:
         r.raise_for_status()
         with tmp_path.open("wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 256):
@@ -95,7 +123,7 @@ def try_download_file(
     """
     Safe download wrapper.
     Returns (ok, bytes_written).
-    ok False for HTTP errors, timeouts, or size abort.
+    ok False for HTTP errors or size abort.
     """
     try:
         n = download_file(

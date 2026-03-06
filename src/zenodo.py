@@ -6,40 +6,51 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
-from download_policy import DownloadPolicy, select_files
-from util import ensure_dir, is_qda_file, safe_slug, try_download_file
+from src.util import ensure_dir, is_qda_file, safe_slug, try_download_file, get_json_with_retries
 
 ZENODO_API = "https://zenodo.org/api/records"
 
 
-def _broad_query(qda_exts: List[str]) -> str:
-    ext_terms = [e.lower().lstrip(".") for e in qda_exts]
-    ext_terms = list(dict.fromkeys(ext_terms))[:15]
-    ext_q = "(" + " OR ".join(ext_terms) + ")"
-    qual_q = '(qualitative OR interview OR transcript OR "focus group" OR ethnograph OR coding)'
-    return f"({ext_q}) AND {qual_q}"
+def _broad_query() -> str:
+    return (
+        '(qualitative OR "qualitative data" OR interview OR transcript OR "focus group" OR ethnograph* '
+        'OR "grounded theory" OR "thematic analysis" OR "content analysis" OR "coding") '
+        'AND (NVivo OR MAXQDA OR "ATLAS.ti" OR "Atlas.ti" OR REFI OR QDA OR qdpx OR nvpx OR atlasproj OR mx24 OR mx22 OR mx20)'
+    )
 
 
 def search_records_overfetch(
     *,
-    qda_exts: List[str],
+    qda_exts: List[str],  # kept for signature compatibility
     session: requests.Session,
-    timeout: int,
+    connect_timeout: int,
+    read_timeout: int,
     user_agent: str,
     overfetch: int
 ) -> List[Dict]:
-    q = _broad_query(qda_exts)
+    q = _broad_query()
     headers = {"User-Agent": user_agent}
 
     results: List[Dict] = []
     page = 1
     size = 25
+    max_pages = 80
 
     while len(results) < overfetch:
         params = {"q": q, "page": page, "size": size}
-        r = session.get(ZENODO_API, params=params, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
+
+        if page == 1 or page % 5 == 0:
+            print(f"Zenodo search: requesting page {page}, collected {len(results)}/{overfetch}")
+
+        data = get_json_with_retries(
+            ZENODO_API,
+            session=session,
+            headers=headers,
+            params=params,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            max_retries=4,
+        )
 
         hits = (data.get("hits") or {}).get("hits") or []
         if not hits:
@@ -48,7 +59,8 @@ def search_records_overfetch(
         results.extend(hits)
         page += 1
 
-        if page > 200:
+        if page > max_pages:
+            print(f"Zenodo search: reached max_pages={max_pages}, stopping search phase.")
             break
 
     return results[:overfetch]
@@ -91,8 +103,8 @@ def download_record(
     connect_timeout: int,
     read_timeout: int,
     user_agent: str,
-    policy: DownloadPolicy,
-    run_budget_left_bytes: int
+    policy,
+    run_budget_left_bytes: int,
 ) -> Tuple[str, List[Tuple[str, str]], int]:
     rec_id = str(record.get("id", "unknown"))
     md = record.get("metadata") or {}
@@ -106,7 +118,8 @@ def download_record(
     (local_dir / "metadata.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
 
     files = record.get("files") or []
-    candidates: List[Dict] = []
+
+    candidates = []
     for f in files:
         key = f.get("key")
         links = f.get("links") or {}
@@ -114,37 +127,33 @@ def download_record(
         if not key or not dl_url:
             continue
 
-        size = f.get("size")
-        size_bytes = int(size) if isinstance(size, int) else None
+        size_bytes = f.get("size")
+        if not isinstance(size_bytes, int):
+            size_bytes = None
 
         candidates.append({"name": key, "url": dl_url, "size_bytes": size_bytes})
 
-    selected = select_files(candidates, policy)
+    selected = policy.select_files(candidates) if hasattr(policy, "select_files") else candidates
 
     qda_rows: List[Tuple[str, str]] = []
-    dataset_bytes_used = 0
-    run_bytes_used = 0
+    bytes_used = 0
 
     for f in selected:
-        name = f["name"]
+        key = f["name"]
         url = f["url"]
         size_bytes = f.get("size_bytes")
 
-        remaining_dataset = policy.max_total_bytes_per_dataset - dataset_bytes_used
-        remaining_run = run_budget_left_bytes - run_bytes_used
-        if remaining_dataset <= 0 or remaining_run <= 0:
+        remaining_run = run_budget_left_bytes - bytes_used
+        if remaining_run <= 0:
             break
 
-        max_for_this_file = policy.max_bytes_per_file
-        if remaining_dataset < max_for_this_file:
-            max_for_this_file = remaining_dataset
-        if remaining_run < max_for_this_file:
-            max_for_this_file = remaining_run
+        max_for_this_file = min(policy.max_bytes_per_file, remaining_run)
 
         if isinstance(size_bytes, int) and size_bytes > max_for_this_file:
             continue
 
-        out_path = local_dir / name
+        out_path = local_dir / key
+
         ok, nbytes = try_download_file(
             url,
             out_path,
@@ -157,10 +166,9 @@ def download_record(
         if not ok:
             continue
 
-        dataset_bytes_used += nbytes
-        run_bytes_used += nbytes
+        bytes_used += nbytes
 
-        if is_qda_file(name, qda_exts):
-            qda_rows.append((url, name))
+        if is_qda_file(key, qda_exts):
+            qda_rows.append((url, key))
 
-    return local_dir_rel, qda_rows, run_bytes_used
+    return local_dir_rel, qda_rows, bytes_used
