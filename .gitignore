@@ -6,3 +6,10 @@ __pycache__/
 
 my_downloads/
 logs/
+
+metadata.db
+metadata.db-wal
+metadata.db-shm
+my_downloads
+.venv
+__pycache__
