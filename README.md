@@ -1,9 +1,8 @@
 # QDArchive — Part 1: Data Acquisition
 
 **Course:** Seeding QDArchive — FAU Erlangen, Winter 2025/26  
-**Student:** Hussain Rifat  
+**Student:** Jakir Hussain Rifat  
 **Part:** 1 of 3 — Data Acquisition (5 ECTS)  
-**Deadline:** April 3rd, 2026
 
 ## Assigned Repositories
 
