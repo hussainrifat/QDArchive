@@ -43,7 +43,7 @@ This project seeds the QDArchive by automatically scraping and downloading quali
 |--------|----------|----------------|----------------|--------|
 | Dryad | 787 | 338 | 3,296 (rate limited, retry in progress) | API-CALL |
 | FSD Finland | 403 | 408 (DDI XML) | 396 (login required) | SCRAPING |
-| **Total** | **1,190** | **741+** | **3,715** | |
+| **Total** | **1,190** | **1141+** | **3,715** | |
 
 **File types successfully downloaded from Dryad:**
 `.docx` (30), `.pdf` (24), `.csv` (47), `.xlsx` (27), `.xml` (5), `.zip` (10), `.r` (18), `.md` (13), `.txt` (13), and more.
