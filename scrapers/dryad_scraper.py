@@ -35,6 +35,7 @@ REPO_URL    = "https://datadryad.org"
 DRYAD_CLIENT_ID     = os.getenv("DRYAD_CLIENT_ID", "")
 DRYAD_CLIENT_SECRET = os.getenv("DRYAD_CLIENT_SECRET", "")
 
+# Queries aligned with professor's worklog + additional qualitative methods
 QUERIES = [
     "qualitative research",
     "qualitative data",
@@ -44,12 +45,17 @@ QUERIES = [
     "interview transcripts",
     "focus group qualitative",
     "thematic analysis",
+    "grounded theory",
+    "semi structured interview",
+    "case study qualitative",
+    "phenomenology",
+    "content analysis qualitative",
+    "discourse analysis",
+    "interview transcript",
 ]
 
-PER_PAGE  = 100
-MAX_PAGES = 20
-
-# Polite delay between file downloads (seconds)
+PER_PAGE       = 100
+MAX_PAGES      = 20
 DOWNLOAD_DELAY = 2.0
 
 
@@ -110,6 +116,7 @@ def api_get(path: str, headers: dict, params: dict = None) -> dict | None:
 
 
 def search_datasets(query: str, headers: dict):
+    """Yield dataset dicts from all pages of search results."""
     for page in range(1, MAX_PAGES + 1):
         data = api_get("search", headers, {
             "q": query, "per_page": PER_PAGE, "page": page
@@ -127,6 +134,7 @@ def search_datasets(query: str, headers: dict):
 
 
 def get_latest_version_id(dataset_id: int, headers: dict) -> int | None:
+    """Get the latest version ID for a dataset."""
     data = api_get(f"datasets/{dataset_id}/versions", headers, {"per_page": 1})
     if not data:
         return None
@@ -135,6 +143,7 @@ def get_latest_version_id(dataset_id: int, headers: dict) -> int | None:
 
 
 def get_file_list(version_id: int, headers: dict) -> list[dict]:
+    """Return all file metadata dicts for a version."""
     data = api_get(f"versions/{version_id}/files", headers, {"per_page": 1000})
     if not data:
         return []
@@ -145,7 +154,7 @@ def download_single_file(url: str, dest_path: Path, headers: dict,
                          max_retries: int = 3) -> str:
     """
     Download one file with retry logic for rate limiting (HTTP 429).
-    Waits 60 seconds on 429 then retries up to max_retries times.
+    On 429: waits 60s per attempt then retries up to max_retries times.
     """
     if dest_path.exists():
         return STATUS_SUCCESS
@@ -163,10 +172,8 @@ def download_single_file(url: str, dest_path: Path, headers: dict,
                 return STATUS_SUCCESS
 
             elif r.status_code == 429:
-                # Rate limited — wait and retry
-                wait = 60 * attempt  # 60s, 120s, 180s
-                print(f"    [429 RATE LIMIT] attempt {attempt}/{max_retries} "
-                      f"— waiting {wait}s...")
+                wait = 60 * attempt
+                print(f"    [429] attempt {attempt}/{max_retries} — waiting {wait}s...")
                 time.sleep(wait)
                 continue
 
@@ -179,7 +186,6 @@ def download_single_file(url: str, dest_path: Path, headers: dict,
 
         except requests.Timeout:
             if attempt < max_retries:
-                print(f"    [TIMEOUT] attempt {attempt}/{max_retries} — retrying...")
                 time.sleep(10)
                 continue
             return STATUS_TIMEOUT
@@ -188,51 +194,6 @@ def download_single_file(url: str, dest_path: Path, headers: dict,
             return STATUS_HTTP_ERROR
 
     return "FAILED_HTTP_429"
-
-
-def retry_failed_downloads(data_root: Path, headers: dict):
-    """
-    Re-attempt downloading all files previously marked as FAILED_HTTP_429.
-    Call this after the main scrape to clean up rate-limited failures.
-    """
-    from db.database import get_connection
-
-    conn = get_connection()
-    failed = conn.execute("""
-        SELECT f.id, f.file_name, f.file_type, p.download_project_folder
-        FROM FILES f
-        JOIN PROJECTS p ON p.id = f.project_id
-        WHERE f.status = 'FAILED_HTTP_429'
-        ORDER BY p.id
-    """).fetchall()
-    conn.close()
-
-    if not failed:
-        print("[Dryad] No FAILED_HTTP_429 files to retry.")
-        return
-
-    print(f"\n[Dryad] Retrying {len(failed)} rate-limited files...")
-    fixed = 0
-
-    for row in failed:
-        file_id      = row[0]
-        file_name    = row[1]
-        project_dir  = row[3]
-        dest_dir     = data_root / REPO_FOLDER / project_dir
-        dest_path    = dest_dir / Path(file_name).name
-
-        # Reconstruct download URL from file_id stored in file_name path
-        # File download URL pattern: /api/v2/files/{id}/download
-        # We need to find the file ID — stored in our FILES table path
-        # Simplest: search API for the file by project
-        # Actually we need to re-query the version files to get the href
-        # For now mark for manual retry — log the file
-        print(f"  Needs retry: {file_name} in {project_dir}")
-
-    print(f"  Note: To retry these, re-run: python3 main.py --source dryad")
-    print(f"  Already-scraped projects will be SKIPPED but files with")
-    print(f"  FAILED_HTTP_429 status need a separate retry mechanism.")
-    print(f"  For now, focus on getting FSD data — come back to these.")
 
 
 def run(data_root: Path, query_override: str = None):
@@ -279,6 +240,7 @@ def run(data_root: Path, query_override: str = None):
             keywords    = [k for k in (ds.get("keywords") or []) if k]
             license_str = ds.get("license") or ""
 
+            # Extract version ID from _links to avoid extra API call
             version_href = (
                 ds.get("_links", {})
                   .get("stash:version", {})
@@ -366,7 +328,6 @@ def run(data_root: Path, query_override: str = None):
                     if status == STATUS_SUCCESS:
                         downloaded += 1
 
-                    # Polite delay between every file download
                     time.sleep(DOWNLOAD_DELAY)
 
                 print(f"    → {len(files)} files, {downloaded} downloaded")
