@@ -4,4 +4,4 @@ __pycache__/
 data/
 *.log
 .env
-.DS_Store
+.DS_Storemetadata.db
