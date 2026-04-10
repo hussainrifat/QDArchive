@@ -118,6 +118,8 @@ Per the professor's LICENSE enum:
 ---
 
 ## Project Structure
+
+```
 QDArchive/
 ├── 23025313-seeding.db        # Submission SQLite database
 ├── main.py                    # Entry point — run all scrapers
@@ -137,10 +139,11 @@ QDArchive/
 ├── scripts/
 │   └── retry_429.py           # Retry FAILED_SERVER_UNRESPONSIVE files
 └── data/                      # Downloaded files (not in git — too large)
-├── dryad/
-│   └── {dataset_id}/      # e.g. data/dryad/16857/
-└── fsd/
-└── {study_id}/        # e.g. data/fsd/FSD3753/
+    ├── dryad/
+    │   └── {dataset_id}/      # e.g. data/dryad/16857/
+    └── fsd/
+        └── {study_id}/        # e.g. data/fsd/FSD3753/
+```
 
 ---
 
@@ -226,6 +229,8 @@ The FSD catalogue page uses JavaScript to render pagination controls. The next p
 
 The `data/` folder with all downloaded files is not stored in git due to size.
 
-- **23025313-seeding.db:** Available directly on GitHub in the root of this repository
-- **data/ folder:** *(add Google Drive link if required)*
+## Download Links
 
+- **23025313-seeding.db (SQLite database):** https://github.com/hussainrifat/QDArchive/blob/main/23025313-seeding.db
+
+- **data/ folder (downloaded files):** https://faubox.rrze.uni-erlangen.de/getlink/fiRAkmdT7TEysXmSouzRjZ/data
