@@ -56,9 +56,9 @@ I scraped the full FSD qualitative catalogue using the professor's exact example
 
 | Source | Projects | Files Downloaded | Files Failed | Method |
 |--------|----------|-----------------|--------------|--------|
-| Dryad | 787 | 1,141 | 3,342 (server/rate limit) | API-CALL |
+| Dryad | 853 | 1,141 | 3,342 (server/rate limit) | API-CALL |
 | FSD Finland | 403 | 408 (DDI XML) | 396 (login required) | SCRAPING |
-| **Total** | **1,190** | **1,549** | **3,738** | |
+| **Total** | **1,256** | **1,549** | **3,738** | |
 
 ### File Types Successfully Downloaded
 
@@ -88,11 +88,10 @@ The SQLite database `23025313-seeding.db` follows the professor's exact schema w
 | Table | Rows | Description |
 |-------|------|-------------|
 | REPOSITORIES | 2 | Dryad (id=1), FSD (id=2) |
-| PROJECTS | 1,190 | One row per research project — all required fields populated |
-| FILES | 4,879 | One row per file with descriptive download status |
-| KEYWORDS | 6,574 | Keywords extracted per project |
-| PERSON_ROLE | 4,661 | Authors per project |
-| LICENSES | 1,190 | License per project |
+| PROJECTS | 1,256 | One row per research project — all required fields populated |
+| KEYWORDS | 6,884 | Keywords extracted per project |
+| PERSON_ROLE | 4,926 | Authors per project |
+| LICENSES | 1,256 | License per project |
 
 ### Download Status Values (FILES.status)
 
@@ -113,7 +112,7 @@ Per the professor's LICENSE enum:
 |-------|--------|
 | `CC0` | Dryad datasets with CC0 license |
 | `CC BY 4.0` | Dryad datasets with CC BY 4.0 and open FSD (class A) |
-| `FAILED_LOGIN_REQUIRED` | FSD datasets with restricted access (class B/C/D) |
+| `Availability class B/C/D` | FSD datasets with restricted access |
 
 ---
 
@@ -158,8 +157,10 @@ pip install -r requirements.txt
 ```
 
 Create a `.env` file in the project root:
+```
 DRYAD_CLIENT_ID=your_client_id
 DRYAD_CLIENT_SECRET=your_client_secret
+```
 
 Get Dryad API credentials at: https://datadryad.org → Login → My Account → API credentials
 
@@ -231,6 +232,7 @@ The `data/` folder with all downloaded files is not stored in git due to size.
 
 ## Download Links
 
-- **23025313-seeding.db (SQLite database):** https://github.com/hussainrifat/QDArchive/blob/main/23025313-seeding.db
+The `data/` folder with all downloaded files is not stored in git due to size.
 
+- **23025313-seeding.db (SQLite database):** https://github.com/hussainrifat/QDArchive/blob/main/23025313-seeding.db
 - **data/ folder (downloaded files):** https://faubox.rrze.uni-erlangen.de/getlink/fiRAkmdT7TEysXmSouzRjZ/data
